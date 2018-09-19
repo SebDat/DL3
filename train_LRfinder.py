@@ -25,6 +25,8 @@ from dataloaders import custom_transforms as tr
 
 from tqdm import tqdm
 from datetime import datetime
+import matplotlib.pyplot as plt
+
 
 gpu_id = 0
 print('Using GPU: {} '.format(gpu_id))
@@ -51,7 +53,7 @@ cycle_len = 2    #number of epoch between restart
 #cycle_mult = 1   #
 annealing = 1
 
-number_ex = 10  #how many examples to see before increasing learning rate
+number_ex = 20  #how many examples to see before increasing learning rate
 
 def get_lr(lr_base, current_epoch, current_batch, tot_batch, cycle_len, annealing = 1):
     factor = 0.1
@@ -157,6 +159,7 @@ if resume_epoch != nEpochs:
         #    print('(poly lr policy) learning rate: ', lr_)
         #    optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
         LOSS = []
+        LR = []
         net.train()
         for ii, sample_batched in enumerate(trainloader):
 
@@ -186,10 +189,15 @@ if resume_epoch != nEpochs:
                 print('[Epoch: %d, numImages: %5d]' % (epoch, ii * p['trainBatch'] + inputs.data.shape[0]))
                 print('Loss: %f' % running_loss_tr)
                 LOSS.append(running_loss_tr)
+                LR.append(lr_)
                 running_loss_tr = 0
                 stop_time = timeit.default_timer()
                 print("Execution time: " + str(stop_time - start_time) + "\n")
-                
+
+            if(len(LOSS)>4):
+                if(LOSS[-1]>LOSS[-5] and LOSS[-1]>LOSS[-5] and LOSS[-3]>LOSS[-5] and LOSS[-4]>LOSS[-5]):
+                    break
+
             # Backward the averaged gradient
             loss /= p['nAveGrad']
             loss.backward()

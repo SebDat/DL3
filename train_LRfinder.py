@@ -24,7 +24,7 @@ from networks import deeplab_xception, deeplab_resnet
 from dataloaders import custom_transforms as tr
 
 from tqdm import tqdm
-from datetime import datetime
+import numpy as np
 import matplotlib.pyplot as plt
 
 

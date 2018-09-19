@@ -49,11 +49,12 @@ backbone = 'resnet'  #'xception' # Use xception or resnet as feature extractor,
 #Learning Rate Restart Parameters
 cycle_len = 2    #number of epoch between restart
 #cycle_mult = 1   #
+annealing = 1
 
-
-def get_lr(lr_base, current_epoch, current_batch, tot_batch, cycle_len):
+def get_lr(lr_base, current_epoch, current_batch, tot_batch, cycle_len, annealing = 1):
     factor = 0.1
     #period_len = tot_batch*cycle_len*cycle_mult**(current_epoch//cycle_len)
+    lr_base = lr_base*annealing**(current_epoch//cycle_len)
     period_len = tot_batch*cycle_len
     current_batch_period = current_batch + tot_batch*(current_epoch-cycle_len*(current_epoch//cycle_len))
     lr = 0.5*(1-factor)*lr_base*(np.cos(np.pi*(current_batch_period/period_len))+1)+factor*lr_base
@@ -157,7 +158,7 @@ if resume_epoch != nEpochs:
         net.train()
         for ii, sample_batched in enumerate(trainloader):
 
-            lr_ = get_lr(p['lr'], epoch, ii, tot_batch, cycle_len)
+            lr_ = get_lr(p['lr'], epoch, ii, tot_batch, cycle_len, annealing)
             optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
 
             inputs, labels = sample_batched['image'], sample_batched['label']

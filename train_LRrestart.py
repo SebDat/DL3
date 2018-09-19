@@ -48,16 +48,16 @@ backbone = 'resnet'  #'xception' # Use xception or resnet as feature extractor,
 
 #Learning Rate Restart Parameters
 cycle_len = 2    #number of epoch between restart
-cycle_mult = 1   #
+#cycle_mult = 1   #
 
 
-def get_lr(lr_base, current_epoch, current_batch, tot_batch, cycle_len, cycle_mult):
-    
-
+def get_lr(lr_base, current_epoch, current_batch, tot_batch, cycle_len):
+    factor = 0.1
+    #period_len = tot_batch*cycle_len*cycle_mult**(current_epoch//cycle_len)
+    period_len = tot_batch*cycle_len
+    current_batch_period = current_batch + tot_batch*(current_epoch-cycle_len*(current_epoch//cycle_len))
+    lr = 0.5*(1-factor)*lr_base*(np.cos(np.pi*(current_batch_period/period_len))+1)+factor*lr_base
     return lr
-
-
-
 
 save_dir_root = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 exp_name = os.path.dirname(os.path.abspath(__file__)).split('/')[-1]
@@ -140,6 +140,8 @@ if resume_epoch != nEpochs:
     global_step = 0
     print("Training Network")
 
+    tot_batch = int(len(voc_train.images)/p['trainBatch'])
+
     # Main Training and Testing Loop
     for epoch in tqdm(range(resume_epoch, nEpochs)):
         start_time = timeit.default_timer()
@@ -147,13 +149,16 @@ if resume_epoch != nEpochs:
         print("Optimization step number {0} test started at {1}".format(epoch+1,datetime.now()))
         print('\n\n')
         
-        if epoch % p['epoch_size'] == p['epoch_size'] - 1:
-            lr_ = utils.lr_poly(p['lr'], epoch, nEpochs, 0.9)
-            print('(poly lr policy) learning rate: ', lr_)
-            optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
+        #if epoch % p['epoch_size'] == p['epoch_size'] - 1:
+        #    lr_ = utils.lr_poly(p['lr'], epoch, nEpochs, 0.9)
+        #    print('(poly lr policy) learning rate: ', lr_)
+        #    optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
 
         net.train()
         for ii, sample_batched in enumerate(trainloader):
+
+            lr_ = get_lr(p['lr'], epoch, ii, tot_batch, cycle_len)
+            optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
 
             inputs, labels = sample_batched['image'], sample_batched['label']
             # Forward-Backward of the mini-batch

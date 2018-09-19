@@ -53,7 +53,7 @@ cycle_len = 2    #number of epoch between restart
 #cycle_mult = 1   #
 annealing = 1
 
-number_ex = 20  #how many examples to see before increasing learning rate
+number_ex = 40  #how many examples to see before increasing learning rate
 
 def get_lr(lr_base, current_epoch, current_batch, tot_batch, cycle_len, annealing = 1):
     factor = 0.1
@@ -183,7 +183,7 @@ if resume_epoch != nEpochs:
             running_loss_tr += loss.item()
 
             # Print and store loss
-            if ii % number_ex == (number_ex - 1):
+            if ii % (number_ex//2) == ((number_ex//2) - 1):
                 running_loss_tr = running_loss_tr / number_ex
                 writer.add_scalar('data/total_loss_epoch', running_loss_tr, epoch)
                 print('[Epoch: %d, numImages: %5d]' % (epoch, ii * p['trainBatch'] + inputs.data.shape[0]))

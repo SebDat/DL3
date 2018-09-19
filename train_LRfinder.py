@@ -210,6 +210,6 @@ if resume_epoch != nEpochs:
                 optimizer.zero_grad()
                 aveGrad = 0
 
-    plt.plot(LOSS,'-bo')
+    plt.plot(LR,LOSS,'-bo')
     plt.show()
     writer.close()

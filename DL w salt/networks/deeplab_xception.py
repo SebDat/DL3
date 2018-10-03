@@ -342,9 +342,14 @@ class DeepLabv3_plus(nn.Module):
                                        nn.BatchNorm2d(256),
                                        nn.ReLU(),
                                        nn.Conv2d(256, n_classes, kernel_size=1, stride=1))
+        self.drop = nn.Dropout2d(p=0.5)   #SC
+
 
     def forward(self, input):
         x, low_level_features = self.xception_features(input)
+
+        x = self.drop(x)        #SC
+
         x1 = self.aspp1(x)
         x2 = self.aspp2(x)
         x3 = self.aspp3(x)
@@ -366,6 +371,9 @@ class DeepLabv3_plus(nn.Module):
 
 
         x = torch.cat((x, low_level_features), dim=1)
+
+        x = self.drop(x)            #SC
+
         x = self.last_conv(x)
         x = F.upsample(x, size=input.size()[2:], mode='bilinear', align_corners=True)
 

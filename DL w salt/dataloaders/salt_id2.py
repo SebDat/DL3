@@ -6,7 +6,7 @@ from torch.utils.data import Dataset
 from mypath import Path
 from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img
 #slight modification in the loading of the data to use standard numpy instead of PIL
-
+import pandas as pd
 
 class SALT2Segmentation(Dataset):
     """
@@ -57,6 +57,12 @@ class SALT2Segmentation(Dataset):
 
         assert (len(self.images) == len(self.categories))
 
+        #SC: Get salt proportion from file
+        self.SaltProp = pd.read_csv(self._base_dir + '/salt_prop.csv')
+
+        #SC: Get depth from file
+        self.depths = pd.read_csv(self._base_dir + '/depths.csv')
+
         # Display stats
         print('Number of images in {}: {:d}'.format(split, len(self.images)))
 
@@ -65,11 +71,18 @@ class SALT2Segmentation(Dataset):
 
 
     def __getitem__(self, index):
+        
         _img, _target= self._make_img_gt_point_pair(index)
         sample = {'image': _img, 'label': _target}
 
         if self.transform is not None:
             sample = self.transform(sample)
+
+        #SC: add the use of other low level features
+
+        sample['salt proportion'] = self.SaltProp[self.SaltProp['id'] == self.im_ids[index]+'.png'].values[0,2]
+
+        sample['depth'] = self.depths[self.depths['id'] == self.im_ids[index]].values[0,1]
 
         return sample
 
@@ -78,9 +91,9 @@ class SALT2Segmentation(Dataset):
         # _img = np.array(Image.open(self.images[index]).convert('RGB')).astype(np.float32)
         # _target = np.array(Image.open(self.categories[index])).astype(np.float32)
 
-        #_img = Image.open(self.images[index]).convert('RGB')
+        _img = Image.open(self.images[index]).convert('RGB')
         #_img = Image.open(self.images[index])   #removed convertion
-        _img = img_to_array(load_img(self.images[index], grayscale=True))
+        #_img = img_to_array(load_img(self.images[index], grayscale=True))
         _target = Image.open(self.categories[index])
 
         return _img, _target

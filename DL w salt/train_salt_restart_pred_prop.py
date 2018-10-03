@@ -18,9 +18,9 @@ from torchvision.utils import make_grid
 from tensorboardX import SummaryWriter
 
 # Custom includes
-from dataloaders import pascal, sbd, combine_dbs, salt_id
-from dataloaders import utils
-from networks import deeplab_xception, deeplab_resnet
+from dataloaders import pascal, sbd, combine_dbs, salt_id, salt_id2
+from dataloaders import utils, FocalLoss 
+from networks import deeplab_xception2, deeplab_resnet
 from dataloaders import custom_transforms as tr
 
 from tqdm import tqdm
@@ -31,32 +31,38 @@ from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_a
 from skimage.transform import resize
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+
 
 gpu_id = 0
 print('Using GPU: {} '.format(gpu_id))
 # Setting parameters
 use_sbd = False  # Whether to use SBD dataset
-nEpochs = 100  # Number of epochs for training
-resume_epoch = 0   # Default is 0, change if want to resume
+nEpochs = 1000  # Number of epochs for training
+resume_epoch =640   # Default is 0, change if want to resume
 
 p = OrderedDict()  # Parameters to include in report
-p['trainBatch'] = 20  # Training batch size
-testBatch = 20  # Testing batch size
+p['trainBatch'] = 16  # Training batch size
+testBatch = 16  # Testing batch size
 useTest = True  # See evolution of the test set when training
 nTestInterval = 5 # Run on test set every nTestInterval epochs
 snapshot = 10  # Store a model every snapshot epochs
 p['nAveGrad'] = 1  # Average the gradient of several iterations
-p['lr'] = 1e-7  # Learning rate
-p['wd'] = 5e-4  # Weight decay
+p['lr'] = 3e-5  # Learning rate 1e-5
+p['wd'] = 1e-3  # Weight decay ini: 5e-4
 p['momentum'] = 0.9  # Momentum
 p['epoch_size'] = 5  # How many epochs to change learning rate
 backbone = 'xception' # Use xception or resnet as feature extractor,
 sz = 128  #image size
+LossFunc = 'focal'
+
+TrainValSplit = False   #if True, split the training dataset into train/val
+
 
 #Learning Rate Restart Parameters
 cycle_len = 2    #number of epoch between restart
 #cycle_mult = 1   #
-annealing = 1
+annealing = 0.98
 
 number_ex = 40  #how many examples to see before increasing learning rate
 
@@ -84,7 +90,7 @@ save_dir = os.path.join(save_dir_root, 'run', 'run_' + str(run_id))
 
 # Network definition
 if backbone == 'xception':
-    net = deeplab_xception.DeepLabv3_plus(nInputChannels=3, n_classes=2, os=16, pretrained=True)
+    net = deeplab_xception2.DeepLabv3_plus(nInputChannels=3, n_classes=2, os=16, pretrained=True)
 elif backbone == 'resnet':
     net = deeplab_resnet.DeepLabv3_plus(nInputChannels=3, n_classes=2, os=16, pretrained=True)
 else:
@@ -92,6 +98,8 @@ else:
 
 modelName = 'deeplabv3plus-' + backbone + '-voc'
 criterion = utils.cross_entropy2d
+
+criterionfocal = FocalLoss.FocalLoss(gamma=2, alpha=None, size_average=False)
 
 
 if resume_epoch == 0:
@@ -108,7 +116,7 @@ if gpu_id >= 0:
     net.cuda()
 
 # Compute the statistics of the dataset of images
-location = 'work'
+location = 'home'
 
 if(location == 'home'):
     PATH = '/home/katou/Python/GitHubRepo/Data/Kaggle Salt Id/'
@@ -120,7 +128,9 @@ else:
 #train image + mask data
 train_mask = pd.read_csv(PATH+'train.csv')
 #depth data
-depth = pd.read_csv(PATH+'depths.csv')
+Depths = pd.read_csv(PATH+'depths.csv')
+#salt data
+SaltProp = pd.read_csv(PATH+ 'salt_prop.csv')
 #training path
 train_path = PATH+'train'
 #list of files
@@ -128,71 +138,88 @@ file_list = list(train_mask['id'].values)
 
 train_ids = next(os.walk(train_path+"/images"))[2] if location == 'home' else next(os.walk(train_path+"\\images"))[2]
 
-
 im_chan = 1
 im_width = sz
 im_height = sz
 n_features = 1 # Number of extra features, like depth
 border = 2
-# Get and resize train images and masks
-X = np.zeros((len(train_ids), im_height, im_width, im_chan), dtype=np.float32)
-M = np.zeros((len(train_ids),), dtype=np.float32)
-y = np.zeros((len(train_ids), im_height, im_width, 1), dtype=np.float32)
-X_feat = np.zeros((len(train_ids), n_features), dtype=np.float32)
-print('Getting and resizing train images and masks ... ')
-sys.stdout.flush()
-for n, id_ in tqdm(enumerate(train_ids), total=len(train_ids)):
-    path = train_path 
-    # Depth
-    #X_feat[n] = depth.loc[id_.replace('.png', ''), 'z']
-    
-    # Load X
-    img = load_img(path + '/images/' + id_, grayscale=True) if location == 'home' else load_img(path + '\\images\\' + id_, grayscale=True)
-    x_img = img_to_array(img)
-    x_img = resize(x_img, (sz, sz, 1), mode='constant', preserve_range=True)
-    
-    # Create cumsum x
-    x_center_mean = x_img[border:-border, border:-border].mean()
-    x_csum = (np.float32(x_img)-x_center_mean).cumsum(axis=0)
-    x_csum -= x_csum[border:-border, border:-border].mean()
-    x_csum /= max(1e-3, x_csum[border:-border, border:-border].std())
 
-    # Load Y
-    mask = img_to_array(load_img(path + '/masks/' + id_, grayscale=True)) if location == 'home' else img_to_array(load_img(path + '\\masks\\' + id_, grayscale=True))
-    mask = resize(mask, (sz, sz, 1), mode='constant', preserve_range=True)
+if(TrainValSplit):
 
-    # Save images
-    X[n, ..., 0] = x_img.squeeze() / 255
-    M[n] = np.mean(x_img.squeeze() / 255)
-    #X[n, ..., 1] = x_csum.squeeze()
-    y[n] = mask / 255
+    # Get and resize train images and masks
+    X = np.zeros((len(train_ids), im_height, im_width, im_chan), dtype=np.float32)
+    M = np.zeros((len(train_ids),), dtype=np.float32)
+    y = np.zeros((len(train_ids), im_height, im_width, 1), dtype=np.float32)
+    X_feat = np.zeros((len(train_ids), n_features), dtype=np.float32)
+    print('Getting and resizing train images and masks ... ')
+    sys.stdout.flush()
+    for n, id_ in tqdm(enumerate(train_ids), total=len(train_ids)):
+        path = train_path 
+        # Depth
+        #X_feat[n] = depth.loc[id_.replace('.png', ''), 'z']
+        
+        # Load X
+        img = load_img(path + '/images/' + id_, grayscale=True) if location == 'home' else load_img(path + '\\images\\' + id_, grayscale=True)
+        x_img = img_to_array(img)
+        x_img = resize(x_img, (sz, sz, 1), mode='constant', preserve_range=True)
+        
+        # Create cumsum x
+        x_center_mean = x_img[border:-border, border:-border].mean()
+        x_csum = (np.float32(x_img)-x_center_mean).cumsum(axis=0)
+        x_csum -= x_csum[border:-border, border:-border].mean()
+        x_csum /= max(1e-3, x_csum[border:-border, border:-border].std())
 
-print('Done!')
+        # Load Y
+        mask = img_to_array(load_img(path + '/masks/' + id_, grayscale=True)) if location == 'home' else img_to_array(load_img(path + '\\masks\\' + id_, grayscale=True))
+        mask = resize(mask, (sz, sz, 1), mode='constant', preserve_range=True)
 
-#split the data using the coverage of salt in the image
-Cov = np.zeros((y.shape[0],),dtype = float)
-for i in range(y.shape[0]):
-    Cov[i] = int(round(10*np.mean(y[i,:,:,0])))
-del X
-del y
-del X_feat
+        # Save images
+        X[n, ..., 0] = x_img.squeeze() / 255
+        M[n] = np.mean(x_img.squeeze() / 255)
+        #X[n, ..., 1] = x_csum.squeeze()
+        y[n] = mask / 255
 
-MM = np.mean(M)
-SS = np.std(M)
+    print('Done!')
 
-x_names = np.array([o.split('.')[0] for o in train_ids])
-y_names = np.array([o.split('.')[0] for o in train_ids])
-trn_x, val_x, trn_y, val_y = train_test_split(x_names, y_names, test_size=0.15, stratify=Cov, random_state=42)
+    #split the data using the coverage of salt in the image
+    Cov = np.zeros((y.shape[0],),dtype = float)
+    for i in range(y.shape[0]):
+        Cov[i] = int(round(10*np.mean(y[i,:,:,0])))
+    del X
+    del y
+    del X_feat
 
-f = open(train_path+'/train.txt', "w+")
+    MM = np.mean(M)
+    SS = np.std(M)
+
+    x_names = np.array([o.split('.')[0] for o in train_ids])
+    y_names = np.array([o.split('.')[0] for o in train_ids])
+    trn_x, val_x, trn_y, val_y = train_test_split(x_names, y_names, test_size=0.15, stratify=Cov, random_state=42)
+
+    f = open(train_path+'/train.txt', "w+")
+    for i in range(len(trn_x)):
+        f.write(trn_x[i]+'\n')
+    f.close()
+
+    f = open(train_path+'/val.txt', "w+")
+    for i in range(len(val_x)):
+        f.write(val_x[i]+'\n')
+    f.close()
+else:
+    df_train = pd.read_csv(train_path+'/train.txt')
+    trn_x = df_train.values.squeeze()
+    df_val = pd.read_csv(train_path+'/val.txt')
+    val_x = df_val.values.squeeze()
+
+
+#Normalize depths data
+depth_min = 1e6
+depth_max = 0
 for i in range(len(trn_x)):
-    f.write(trn_x[i]+'\n')
-f.close()
+    depth_min = min(Depths[Depths['id'] == trn_x[i]].values[0,1],depth_min)
+    depth_max = max(Depths[Depths['id'] == trn_x[i]].values[0,1],depth_max)
 
-f = open(train_path+'/val.txt', "w+")
-for i in range(len(val_x)):
-    f.write(val_x[i]+'\n')
-f.close()
+
 
 # Training loop
 if resume_epoch != nEpochs:
@@ -205,19 +232,20 @@ if resume_epoch != nEpochs:
     p['optimizer'] = str(optimizer)
 
     composed_transforms_tr = transforms.Compose([
-        tr.RandomSized(128),
+        tr.RandomSized(sz),
         tr.RandomRotate(15),
         tr.RandomHorizontalFlip(),
-        tr.Normalize(mean=(MM,MM,MM), std=(SS,SS,SS)),
+        tr.RandomVerticalFlip(),
+        tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         tr.ToTensor()])
 
     composed_transforms_ts = transforms.Compose([
-        tr.FixedResize(size=(128, 128)),
-        tr.Normalize(mean=(MM,MM,MM), std=(SS,SS,SS)),
+        tr.FixedResize(size=(sz, sz)),
+        tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         tr.ToTensor()])
 
-    voc_train = salt_id.SALTSegmentation(split='train', transform=composed_transforms_tr)
-    voc_val = salt_id.SALTSegmentation(split='val', transform=composed_transforms_ts)
+    voc_train = salt_id2.SALT2Segmentation(split='train', transform=composed_transforms_tr)
+    voc_val = salt_id2.SALT2Segmentation(split='val', transform=composed_transforms_ts)
 
     if use_sbd:
         print("Using SBD dataset")
@@ -258,7 +286,9 @@ if resume_epoch != nEpochs:
             lr_ = get_lr(p['lr'], epoch, ii, tot_batch, cycle_len, resume_epoch, annealing)
             optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
             
-            inputs, labels = sample_batched['image'], sample_batched['label']
+            optimizer = optim.Adam(net.parameters(), lr=lr_)
+
+            inputs, labels, salt_props, depths = sample_batched['image'], sample_batched['label'], sample_batched['salt proportion'], sample_batched['depth']
             #print('Inputs size: {0}'.format(inputs.size()))
             #print('Labels size: {0}'.format(labels.size()))
 
@@ -269,16 +299,27 @@ if resume_epoch != nEpochs:
 
             labels = torch.from_numpy(b)
 
+            depths = (depths-depth_min)/(depth_max-depth_min)
+
+
+            depths = torch.tensor(depths,dtype=torch.float64) 
+
             # Forward-Backward of the mini-batch
-            inputs, labels = Variable(inputs, requires_grad=True), Variable(labels)
+            inputs, labels, salt_props, depths  = Variable(inputs, requires_grad=True), Variable(labels), Variable(salt_props, requires_grad=True), Variable(depths, requires_grad=True)
             global_step += inputs.data.shape[0]
 
             if gpu_id >= 0:
-                inputs, labels = inputs.cuda(), labels.cuda()
+                inputs, labels, salt_props, depths = inputs.cuda(), labels.cuda(), salt_props.cuda(), depths.cuda()
 
-            outputs = net.forward(inputs)
+            outputs = net.forward([inputs, salt_props, depths])
 
-            loss = criterion(outputs, labels, size_average=False, batch_average=True)
+            if(LossFunc == 'crossentropy'):
+                loss = criterion(outputs, labels, size_average=False, batch_average=True)
+            elif(LossFunc == 'focal'):
+                loss = criterionfocal.forward(outputs, labels)
+            else:
+                print('Unimplemented loss.')
+
             running_loss_tr += loss.item()
 
             # Print stuff
@@ -323,7 +364,7 @@ if resume_epoch != nEpochs:
             total_miou = 0.0
             net.eval()
             for ii, sample_batched in enumerate(testloader):
-                inputs, labels = sample_batched['image'], sample_batched['label']
+                inputs, labels, salt_props, depths = sample_batched['image'], sample_batched['label'], sample_batched['salt proportion'], sample_batched['depth']
 
                 b = labels.numpy()
                 b = np.round(b/(2**16-1))
@@ -331,18 +372,28 @@ if resume_epoch != nEpochs:
                 c=b.reshape(-1,1)
 
                 labels = torch.from_numpy(b)
+                depths = (depths-depth_min)/(depth_max-depth_min)
+                depths = torch.tensor(depths,dtype=torch.float64)
+                
+                # Forward-Backward of the mini-batch
+                inputs, labels, salt_props, depths  = Variable(inputs, requires_grad=True), Variable(labels), Variable(salt_props, requires_grad=True), Variable(depths, requires_grad=True)
+                global_step += inputs.data.shape[0]
 
-                # Forward pass of the mini-batch
-                inputs, labels = Variable(inputs, requires_grad=True), Variable(labels)
                 if gpu_id >= 0:
-                    inputs, labels = inputs.cuda(), labels.cuda()
+                    inputs, labels, salt_props, depths = inputs.cuda(), labels.cuda(), salt_props.cuda(), depths.cuda()
 
                 with torch.no_grad():
-                    outputs = net.forward(inputs)
+                    outputs = net.forward([inputs, salt_props, depths])
 
                 predictions = torch.max(outputs, 1)[1]
 
-                loss = criterion(outputs, labels, size_average=False, batch_average=True)
+                if(LossFunc == 'crossentropy'):
+                    loss = criterion(outputs, labels, size_average=False, batch_average=True)
+                elif(LossFunc == 'focal'):
+                    loss = criterionfocal.forward(outputs, labels)
+                else:
+                    print('Unimplemented loss.')
+
                 running_loss_ts += loss.item()
 
                 total_miou += utils.get_iou(predictions, labels)
@@ -386,19 +437,18 @@ composed_transforms_tr = transforms.Compose([
         tr.RandomSized(128),
         tr.RandomRotate(15),
         tr.RandomHorizontalFlip(),
-        tr.Normalize(mean=(MM,MM,MM), std=(SS,SS,SS)),
+        tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         tr.ToTensor()])
 
 composed_transforms_ts = transforms.Compose([
         tr.FixedResize(size=(128, 128)),
-        tr.Normalize(mean=(MM,MM,MM), std=(SS,SS,SS)),
+        tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         tr.ToTensor()])
 
-voc_train = salt_id.SALTSegmentation(split='train', transform=composed_transforms_tr)
-voc_val = salt_id.SALTSegmentation(split='val', transform=composed_transforms_ts)
+voc_train = salt_id2.SALT2Segmentation(split='train', transform=composed_transforms_tr)
+voc_val = salt_id2.SALT2Segmentation(split='val', transform=composed_transforms_ts)
 
 testloader = DataLoader(voc_val, batch_size=testBatch, shuffle=False, num_workers=0)   
-
 
 # Start Test
 total_miou = 0.0
@@ -411,7 +461,7 @@ PredNumpy = np.zeros((num_img_ts,sz,sz))
 cc=0
 for ii, sample_batched in enumerate(testloader):
     
-    inputs, labels = sample_batched['image'], sample_batched['label']
+    inputs, labels, salt_props, depths = sample_batched['image'], sample_batched['label'], sample_batched['salt proportion'], sample_batched['depth']
 
     b = labels.numpy()
     b = np.round(b/(2**16-1))
@@ -419,22 +469,32 @@ for ii, sample_batched in enumerate(testloader):
     c=b.reshape(-1,1)
 
     labels = torch.from_numpy(b)
+    depths = (depths-depth_min)/(depth_max-depth_min)
+    depths = torch.tensor(depths,dtype=torch.float64)
 
-    # Forward pass of the mini-batch
-    inputs, labels = Variable(inputs, requires_grad=True), Variable(labels)
+    # Forward-Backward of the mini-batch
+    inputs, labels, salt_props, depths  = Variable(inputs, requires_grad=True), Variable(labels), Variable(salt_props, requires_grad=True), Variable(depths, requires_grad=True)
+    global_step += inputs.data.shape[0]
+
     if gpu_id >= 0:
-        inputs, labels = inputs.cuda(), labels.cuda()
+        inputs, labels, salt_props, depths = inputs.cuda(), labels.cuda(), salt_props.cuda(), depths.cuda()
 
     with torch.no_grad():
-        outputs = net.forward(inputs)
+        outputs = net.forward([inputs, salt_props, depths])
+
+    predictions = torch.max(outputs, 1)[1]
+
+    if(LossFunc == 'crossentropy'):
+        loss = criterion(outputs, labels, size_average=False, batch_average=True)
+    elif(LossFunc == 'focal'):
+        loss = criterionfocal.forward(outputs, labels)
+    else:
+        print('Unimplemented loss.')
 
     #store the labels + outputs into numpy array for later use
     LabelsNumpy[cc:cc+labels.size(0),:,:] = labels.cpu().numpy()[:,0,:,:]
     PredNumpy[cc:cc+labels.size(0),:,:] = outputs.cpu().numpy()[:,1,:,:]
 
-    predictions = torch.max(outputs, 1)[1]
-
-    loss = criterion(outputs, labels, size_average=False, batch_average=True)
     running_loss_ts += loss.item()
 
     total_miou += utils.get_iou(predictions, labels)

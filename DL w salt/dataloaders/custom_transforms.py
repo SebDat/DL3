@@ -25,21 +25,31 @@ class RandomCrop(object):
         w, h = img.size
         th, tw = self.size # target size
         if w == tw and h == th:
-            return {'image': img,
-                    'label': mask}
+            sample['image'] = img
+            sample['label'] = mask
+            return sample
+            #return {'image': img,
+            #        'label': mask}
         if w < tw or h < th:
             img = img.resize((tw, th), Image.BILINEAR)
             mask = mask.resize((tw, th), Image.NEAREST)
-            return {'image': img,
-                    'label': mask}
+            
+            sample['image'] = img
+            sample['label'] = mask
+            return sample
+            #return {'image': img,
+            #        'label': mask}
 
         x1 = random.randint(0, w - tw)
         y1 = random.randint(0, h - th)
         img = img.crop((x1, y1, x1 + tw, y1 + th))
         mask = mask.crop((x1, y1, x1 + tw, y1 + th))
 
-        return {'image': img,
-                'label': mask}
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
+        #return {'image': img,
+        #        'label': mask}
 
 
 class CenterCrop(object):
@@ -60,8 +70,11 @@ class CenterCrop(object):
         img = img.crop((x1, y1, x1 + tw, y1 + th))
         mask = mask.crop((x1, y1, x1 + tw, y1 + th))
 
-        return {'image': img,
-                'label': mask}
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
+        #return {'image': img,
+        #        'label': mask}
 
 
 class RandomHorizontalFlip(object):
@@ -72,9 +85,25 @@ class RandomHorizontalFlip(object):
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
             mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
 
-        return {'image': img,
-                'label': mask}
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
+        #return {'image': img,
+        #        'label': mask}
 
+class RandomVerticalFlip(object):
+    def __call__(self, sample):
+        img = sample['image']
+        mask = sample['label']
+        if random.random() < 0.5:
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+            mask = mask.transpose(Image.FLIP_TOP_BOTTOM)
+
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
+        #return {'image': img,
+        #        'label': mask}
 
 class Normalize(object):
     """Normalize a tensor image with mean and standard deviation.
@@ -93,8 +122,11 @@ class Normalize(object):
         img -= self.mean
         img /= self.std
 
-        return {'image': img,
-                'label': mask}
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
+        #return {'image': img,
+        #        'label': mask}
 
 
 class Normalize_cityscapes(object):
@@ -112,8 +144,11 @@ class Normalize_cityscapes(object):
         img -= self.mean
         img /= 255.0
 
-        return {'image': img,
-                'label': mask}
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
+        #return {'image': img,
+        #        'label': mask}
 
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors."""
@@ -128,10 +163,13 @@ class ToTensor(object):
 
         img = torch.from_numpy(img).float()
         mask = torch.from_numpy(mask).float()
+        
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
 
-
-        return {'image': img,
-                'label': mask}
+        #return {'image': img,
+        #       'label': mask}
 
 
 class FixedResize(object):
@@ -146,9 +184,13 @@ class FixedResize(object):
 
         img = img.resize(self.size, Image.BILINEAR)
         mask = mask.resize(self.size, Image.NEAREST)
+        
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
 
-        return {'image': img,
-                'label': mask}
+        #return {'image': img,
+        #        'label': mask}
 
 
 class Scale(object):
@@ -165,14 +207,20 @@ class Scale(object):
         w, h = img.size
 
         if (w >= h and w == self.size[1]) or (h >= w and h == self.size[0]):
-            return {'image': img,
-                    'label': mask}
+            sample['image'] = img
+            sample['label'] = mask
+            return sample
+            #return {'image': img,
+            #        'label': mask}
         oh, ow = self.size
         img = img.resize((ow, oh), Image.BILINEAR)
         mask = mask.resize((ow, oh), Image.NEAREST)
-
-        return {'image': img,
-                'label': mask}
+        
+        sample['image'] = img
+        sample['label'] = mask
+        return sample
+        #return {'image': img,
+        #        'label': mask}
 
 
 class RandomSizedCrop(object):
@@ -205,14 +253,21 @@ class RandomSizedCrop(object):
                 img = img.resize((self.size, self.size), Image.BILINEAR)
                 mask = mask.resize((self.size, self.size), Image.NEAREST)
 
-                return {'image': img,
-                        'label': mask}
+                #return {'image': img,
+                #                'label': mask}
+                sample['image'] = img
+                sample['label'] = mask
+                return sample
 
         # Fallback
         scale = Scale(self.size)
         crop = CenterCrop(self.size)
-        sample = crop(scale(sample))
+        #sample = crop(scale(sample))
+
+        sample['image'] = crop(scale(img))   #SC
+        sample['label'] = crop(scale(mask))   #SC
         return sample
+
 
 
 class RandomRotate(object):
@@ -226,8 +281,10 @@ class RandomRotate(object):
         img = img.rotate(rotate_degree, Image.BILINEAR)
         mask = mask.rotate(rotate_degree, Image.NEAREST)
 
-        return {'image': img,
-                'label': mask}
+        sample['image'] = img
+        sample['label'] = mask
+
+        return sample
 
 
 class RandomSized(object):
@@ -245,9 +302,11 @@ class RandomSized(object):
         h = int(random.uniform(0.8, 2.5) * img.size[1])
 
         img, mask = img.resize((w, h), Image.BILINEAR), mask.resize((w, h), Image.NEAREST)
-        sample = {'image': img, 'label': mask}
-
-        return self.crop(self.scale(sample))
+        #sample = {'image': img, 'label': mask}
+        sample['image'] = img   #SC
+        sample['label'] = mask   #SC
+        self.crop(self.scale(sample))
+        return sample
 
 class RandomScale(object):
     def __init__(self, limit):
@@ -263,5 +322,8 @@ class RandomScale(object):
         h = int(scale * img.size[1])
 
         img, mask = img.resize((w, h), Image.BILINEAR), mask.resize((w, h), Image.NEAREST)
+        sample['image'] = img
+        sample['label'] = mask
 
-        return {'image': img, 'label': mask}
+        return sample
+        #return {'image': img, 'label': mask}

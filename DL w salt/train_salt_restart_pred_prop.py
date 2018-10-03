@@ -58,6 +58,8 @@ LossFunc = 'focal'
 
 TrainValSplit = False   #if True, split the training dataset into train/val
 
+TestOnly = True
+
 
 #Learning Rate Restart Parameters
 cycle_len = 2    #number of epoch between restart
@@ -221,150 +223,77 @@ for i in range(len(trn_x)):
 
 
 
-# Training loop
-if resume_epoch != nEpochs:
-    # Logging into Tensorboard
-    log_dir = os.path.join(save_dir, 'models', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname())
-    writer = SummaryWriter(log_dir=log_dir)
+if(TestOnly == False):
+    # Training loop
+    if resume_epoch != nEpochs:
+        # Logging into Tensorboard
+        log_dir = os.path.join(save_dir, 'models', datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname())
+        writer = SummaryWriter(log_dir=log_dir)
 
-    # Use the following optimizer
-    optimizer = optim.SGD(net.parameters(), lr=p['lr'], momentum=p['momentum'], weight_decay=p['wd'])
-    p['optimizer'] = str(optimizer)
+        # Use the following optimizer
+        optimizer = optim.SGD(net.parameters(), lr=p['lr'], momentum=p['momentum'], weight_decay=p['wd'])
+        p['optimizer'] = str(optimizer)
 
-    composed_transforms_tr = transforms.Compose([
-        tr.RandomSized(sz),
-        tr.RandomRotate(15),
-        tr.RandomHorizontalFlip(),
-        tr.RandomVerticalFlip(),
-        tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        tr.ToTensor()])
+        composed_transforms_tr = transforms.Compose([
+            tr.RandomSized(sz),
+            tr.RandomRotate(15),
+            tr.RandomHorizontalFlip(),
+            tr.RandomVerticalFlip(),
+            tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            tr.ToTensor()])
 
-    composed_transforms_ts = transforms.Compose([
-        tr.FixedResize(size=(sz, sz)),
-        tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        tr.ToTensor()])
+        composed_transforms_ts = transforms.Compose([
+            tr.FixedResize(size=(sz, sz)),
+            tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            tr.ToTensor()])
 
-    voc_train = salt_id2.SALT2Segmentation(split='train', transform=composed_transforms_tr)
-    voc_val = salt_id2.SALT2Segmentation(split='val', transform=composed_transforms_ts)
+        voc_train = salt_id2.SALT2Segmentation(split='train', transform=composed_transforms_tr)
+        voc_val = salt_id2.SALT2Segmentation(split='val', transform=composed_transforms_ts)
 
-    if use_sbd:
-        print("Using SBD dataset")
-        sbd_train = sbd.SBDSegmentation(split=['train', 'val'], transform=composed_transforms_tr)
-        db_train = combine_dbs.CombineDBs([voc_train, sbd_train], excluded=[voc_val])
-    else:
-        db_train = voc_train
+        if use_sbd:
+            print("Using SBD dataset")
+            sbd_train = sbd.SBDSegmentation(split=['train', 'val'], transform=composed_transforms_tr)
+            db_train = combine_dbs.CombineDBs([voc_train, sbd_train], excluded=[voc_val])
+        else:
+            db_train = voc_train
 
-    trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=0)
-    testloader = DataLoader(voc_val, batch_size=testBatch, shuffle=False, num_workers=0)
+        trainloader = DataLoader(db_train, batch_size=p['trainBatch'], shuffle=True, num_workers=0)
+        testloader = DataLoader(voc_val, batch_size=testBatch, shuffle=False, num_workers=0)
 
-    utils.generate_param_report(os.path.join(save_dir, exp_name + '.txt'), p)
+        utils.generate_param_report(os.path.join(save_dir, exp_name + '.txt'), p)
 
-    num_img_tr = len(trainloader)
-    num_img_ts = len(testloader)
-    running_loss_tr = 0.0
-    running_loss_ts = 0.0
-    aveGrad = 0
-    global_step = 0
-    print("Training Network")
+        num_img_tr = len(trainloader)
+        num_img_ts = len(testloader)
+        running_loss_tr = 0.0
+        running_loss_ts = 0.0
+        aveGrad = 0
+        global_step = 0
+        print("Training Network")
 
-    tot_batch = int(len(voc_train.images)/p['trainBatch'])
-    lr_ = p['lr']
-    # Main Training and Testing Loop
-    for epoch in tqdm(range(resume_epoch, nEpochs)):
-        start_time = timeit.default_timer()
-        print('Epoch number {0} started at {1}'.format(epoch+1, datetime.now()))
+        tot_batch = int(len(voc_train.images)/p['trainBatch'])
+        lr_ = p['lr']
+        # Main Training and Testing Loop
+        for epoch in tqdm(range(resume_epoch, nEpochs)):
+            start_time = timeit.default_timer()
+            print('Epoch number {0} started at {1}'.format(epoch+1, datetime.now()))
 
-        #if epoch % p['epoch_size'] == p['epoch_size'] - 1:
-        #    lr_ = utils.lr_poly(p['lr'], epoch, nEpochs, 0.9)
-        #    print('(poly lr policy) learning rate: ', lr_)
-        #    optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
-        writer.add_scalar('data/learning_rate_epoch', lr_, epoch)
-        
-        net.train()
-        for ii, sample_batched in enumerate(trainloader):
-
-            lr_ = get_lr(p['lr'], epoch, ii, tot_batch, cycle_len, resume_epoch, annealing)
-            optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
+            #if epoch % p['epoch_size'] == p['epoch_size'] - 1:
+            #    lr_ = utils.lr_poly(p['lr'], epoch, nEpochs, 0.9)
+            #    print('(poly lr policy) learning rate: ', lr_)
+            #    optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
+            writer.add_scalar('data/learning_rate_epoch', lr_, epoch)
             
-            optimizer = optim.Adam(net.parameters(), lr=lr_)
+            net.train()
+            for ii, sample_batched in enumerate(trainloader):
 
-            inputs, labels, salt_props, depths = sample_batched['image'], sample_batched['label'], sample_batched['salt proportion'], sample_batched['depth']
-            #print('Inputs size: {0}'.format(inputs.size()))
-            #print('Labels size: {0}'.format(labels.size()))
+                lr_ = get_lr(p['lr'], epoch, ii, tot_batch, cycle_len, resume_epoch, annealing)
+                optimizer = optim.SGD(net.parameters(), lr=lr_, momentum=p['momentum'], weight_decay=p['wd'])
+                
+                optimizer = optim.Adam(net.parameters(), lr=lr_)
 
-            b = labels.numpy()
-            b = np.round(b/(2**16-1))
-            b = b.astype(int)
-            c=b.reshape(-1,1)
-
-            labels = torch.from_numpy(b)
-
-            depths = (depths-depth_min)/(depth_max-depth_min)
-
-
-            depths = torch.tensor(depths,dtype=torch.float64) 
-
-            # Forward-Backward of the mini-batch
-            inputs, labels, salt_props, depths  = Variable(inputs, requires_grad=True), Variable(labels), Variable(salt_props, requires_grad=True), Variable(depths, requires_grad=True)
-            global_step += inputs.data.shape[0]
-
-            if gpu_id >= 0:
-                inputs, labels, salt_props, depths = inputs.cuda(), labels.cuda(), salt_props.cuda(), depths.cuda()
-
-            outputs = net.forward([inputs, salt_props, depths])
-
-            if(LossFunc == 'crossentropy'):
-                loss = criterion(outputs, labels, size_average=False, batch_average=True)
-            elif(LossFunc == 'focal'):
-                loss = criterionfocal.forward(outputs, labels)
-            else:
-                print('Unimplemented loss.')
-
-            running_loss_tr += loss.item()
-
-            # Print stuff
-            if ii % num_img_tr == (num_img_tr - 1):
-                running_loss_tr = running_loss_tr / num_img_tr
-                writer.add_scalar('data/total_loss_epoch', running_loss_tr, epoch)
-                print('[Epoch: %d, numImages: %5d]' % (epoch, ii * p['trainBatch'] + inputs.data.shape[0]))
-                print('Loss: %f' % running_loss_tr)
-                running_loss_tr = 0
-                stop_time = timeit.default_timer()
-                print("Execution time: " + str(stop_time - start_time) + "\n")
-
-            # Backward the averaged gradient
-            loss /= p['nAveGrad']
-            loss.backward()
-            aveGrad += 1
-
-            # Update the weights once in p['nAveGrad'] forward passes
-            if aveGrad % p['nAveGrad'] == 0:
-                writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
-                optimizer.step()
-                optimizer.zero_grad()
-                aveGrad = 0
-
-            # Show 10 * 3 images results each epoch
-            if ii % (num_img_tr // 10) == 0:
-                grid_image = make_grid(inputs[:3].clone().cpu().data, 3, normalize=True)
-                writer.add_image('Image', grid_image, global_step)
-                grid_image = make_grid(utils.decode_seg_map_sequence(torch.max(outputs[:3], 1)[1].detach().cpu().numpy()), 3, normalize=False,
-                                       range=(0, 255))
-                writer.add_image('Predicted label', grid_image, global_step)
-                grid_image = make_grid(utils.decode_seg_map_sequence(torch.squeeze(labels[:3], 1).detach().cpu().numpy()), 3, normalize=False, range=(0, 255))
-                writer.add_image('Groundtruth label', grid_image, global_step)
-
-        # Save the model
-        if (epoch % snapshot) == snapshot - 1:
-            torch.save(net.state_dict(), os.path.join(save_dir, 'models', modelName + '_epoch-' + str(epoch) + '.pth'))
-            print("Save model at {}\n".format(os.path.join(save_dir, 'models', modelName + '_epoch-' + str(epoch) + '.pth')))
-
-        # One testing epoch
-        if useTest and epoch % nTestInterval == (nTestInterval - 1):
-            total_miou = 0.0
-            net.eval()
-            for ii, sample_batched in enumerate(testloader):
                 inputs, labels, salt_props, depths = sample_batched['image'], sample_batched['label'], sample_batched['salt proportion'], sample_batched['depth']
+                #print('Inputs size: {0}'.format(inputs.size()))
+                #print('Labels size: {0}'.format(labels.size()))
 
                 b = labels.numpy()
                 b = np.round(b/(2**16-1))
@@ -372,9 +301,12 @@ if resume_epoch != nEpochs:
                 c=b.reshape(-1,1)
 
                 labels = torch.from_numpy(b)
+
                 depths = (depths-depth_min)/(depth_max-depth_min)
-                depths = torch.tensor(depths,dtype=torch.float64)
-                
+
+
+                depths = torch.tensor(depths,dtype=torch.float64) 
+
                 # Forward-Backward of the mini-batch
                 inputs, labels, salt_props, depths  = Variable(inputs, requires_grad=True), Variable(labels), Variable(salt_props, requires_grad=True), Variable(depths, requires_grad=True)
                 global_step += inputs.data.shape[0]
@@ -382,10 +314,7 @@ if resume_epoch != nEpochs:
                 if gpu_id >= 0:
                     inputs, labels, salt_props, depths = inputs.cuda(), labels.cuda(), salt_props.cuda(), depths.cuda()
 
-                with torch.no_grad():
-                    outputs = net.forward([inputs, salt_props, depths])
-
-                predictions = torch.max(outputs, 1)[1]
+                outputs = net.forward([inputs, salt_props, depths])
 
                 if(LossFunc == 'crossentropy'):
                     loss = criterion(outputs, labels, size_average=False, batch_average=True)
@@ -394,26 +323,100 @@ if resume_epoch != nEpochs:
                 else:
                     print('Unimplemented loss.')
 
-                running_loss_ts += loss.item()
-
-                total_miou += utils.get_iou(predictions, labels)
+                running_loss_tr += loss.item()
 
                 # Print stuff
-                if ii % num_img_ts == num_img_ts - 1:
+                if ii % num_img_tr == (num_img_tr - 1):
+                    running_loss_tr = running_loss_tr / num_img_tr
+                    writer.add_scalar('data/total_loss_epoch', running_loss_tr, epoch)
+                    print('[Epoch: %d, numImages: %5d]' % (epoch, ii * p['trainBatch'] + inputs.data.shape[0]))
+                    print('Loss: %f' % running_loss_tr)
+                    running_loss_tr = 0
+                    stop_time = timeit.default_timer()
+                    print("Execution time: " + str(stop_time - start_time) + "\n")
 
-                    miou = total_miou / (ii * testBatch + inputs.data.shape[0])
-                    running_loss_ts = running_loss_ts / num_img_ts
+                # Backward the averaged gradient
+                loss /= p['nAveGrad']
+                loss.backward()
+                aveGrad += 1
 
-                    print('Validation:')
-                    print('[Epoch: %d, numImages: %5d]' % (epoch, ii * testBatch + inputs.data.shape[0]))
-                    writer.add_scalar('data/test_loss_epoch', running_loss_ts, epoch)
-                    writer.add_scalar('data/test_miour', miou, epoch)
-                    print('Loss: %f' % running_loss_ts)
-                    print('MIoU: %f\n' % miou)
-                    running_loss_ts = 0
+                # Update the weights once in p['nAveGrad'] forward passes
+                if aveGrad % p['nAveGrad'] == 0:
+                    writer.add_scalar('data/total_loss_iter', loss.item(), ii + num_img_tr * epoch)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    aveGrad = 0
+
+                # Show 10 * 3 images results each epoch
+                if ii % (num_img_tr // 10) == 0:
+                    grid_image = make_grid(inputs[:3].clone().cpu().data, 3, normalize=True)
+                    writer.add_image('Image', grid_image, global_step)
+                    grid_image = make_grid(utils.decode_seg_map_sequence(torch.max(outputs[:3], 1)[1].detach().cpu().numpy()), 3, normalize=False,
+                                        range=(0, 255))
+                    writer.add_image('Predicted label', grid_image, global_step)
+                    grid_image = make_grid(utils.decode_seg_map_sequence(torch.squeeze(labels[:3], 1).detach().cpu().numpy()), 3, normalize=False, range=(0, 255))
+                    writer.add_image('Groundtruth label', grid_image, global_step)
+
+            # Save the model
+            if (epoch % snapshot) == snapshot - 1:
+                torch.save(net.state_dict(), os.path.join(save_dir, 'models', modelName + '_epoch-' + str(epoch) + '.pth'))
+                print("Save model at {}\n".format(os.path.join(save_dir, 'models', modelName + '_epoch-' + str(epoch) + '.pth')))
+
+            # One testing epoch
+            if useTest and epoch % nTestInterval == (nTestInterval - 1):
+                total_miou = 0.0
+                net.eval()
+                for ii, sample_batched in enumerate(testloader):
+                    inputs, labels, salt_props, depths = sample_batched['image'], sample_batched['label'], sample_batched['salt proportion'], sample_batched['depth']
+
+                    b = labels.numpy()
+                    b = np.round(b/(2**16-1))
+                    b = b.astype(int)
+                    c=b.reshape(-1,1)
+
+                    labels = torch.from_numpy(b)
+                    depths = (depths-depth_min)/(depth_max-depth_min)
+                    depths = torch.tensor(depths,dtype=torch.float64)
+                    
+                    # Forward-Backward of the mini-batch
+                    inputs, labels, salt_props, depths  = Variable(inputs, requires_grad=True), Variable(labels), Variable(salt_props, requires_grad=True), Variable(depths, requires_grad=True)
+                    global_step += inputs.data.shape[0]
+
+                    if gpu_id >= 0:
+                        inputs, labels, salt_props, depths = inputs.cuda(), labels.cuda(), salt_props.cuda(), depths.cuda()
+
+                    with torch.no_grad():
+                        outputs = net.forward([inputs, salt_props, depths])
+
+                    predictions = torch.max(outputs, 1)[1]
+
+                    if(LossFunc == 'crossentropy'):
+                        loss = criterion(outputs, labels, size_average=False, batch_average=True)
+                    elif(LossFunc == 'focal'):
+                        loss = criterionfocal.forward(outputs, labels)
+                    else:
+                        print('Unimplemented loss.')
+
+                    running_loss_ts += loss.item()
+
+                    total_miou += utils.get_iou(predictions, labels)
+
+                    # Print stuff
+                    if ii % num_img_ts == num_img_ts - 1:
+
+                        miou = total_miou / (ii * testBatch + inputs.data.shape[0])
+                        running_loss_ts = running_loss_ts / num_img_ts
+
+                        print('Validation:')
+                        print('[Epoch: %d, numImages: %5d]' % (epoch, ii * testBatch + inputs.data.shape[0]))
+                        writer.add_scalar('data/test_loss_epoch', running_loss_ts, epoch)
+                        writer.add_scalar('data/test_miour', miou, epoch)
+                        print('Loss: %f' % running_loss_ts)
+                        print('MIoU: %f\n' % miou)
+                        running_loss_ts = 0
 
 
-    writer.close()
+        writer.close()
 
 
 print('Starting evaluating the model..')
@@ -437,6 +440,7 @@ composed_transforms_tr = transforms.Compose([
         tr.RandomSized(128),
         tr.RandomRotate(15),
         tr.RandomHorizontalFlip(),
+        tr.RandomVerticalFlip(),
         tr.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         tr.ToTensor()])
 
@@ -450,6 +454,8 @@ voc_val = salt_id2.SALT2Segmentation(split='val', transform=composed_transforms_
 
 testloader = DataLoader(voc_val, batch_size=testBatch, shuffle=False, num_workers=0)   
 
+#testloader = DataLoader(voc_train, batch_size=testBatch, shuffle=False, num_workers=0)   
+
 # Start Test
 total_miou = 0.0
 net.eval()
@@ -459,6 +465,8 @@ num_img_ts = len(testloader)*testBatch
 LabelsNumpy = np.zeros((num_img_ts,sz,sz))
 PredNumpy = np.zeros((num_img_ts,sz,sz))
 cc=0
+global_step = 0
+running_loss_ts = 0
 for ii, sample_batched in enumerate(testloader):
     
     inputs, labels, salt_props, depths = sample_batched['image'], sample_batched['label'], sample_batched['salt proportion'], sample_batched['depth']
